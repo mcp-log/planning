@@ -1,0 +1,18 @@
+apiVersion: v2
+name: planning
+description: Fulfillment Planning Service for OMS Ecosystem
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - planning
+  - fulfillment
+  - warehouse
+  - oms
+  - microservices
+home: https://mcp-log.github.io/planning/
+sources:
+  - https://github.com/mcp-log/planning
+maintainers:
+  - name: OMS Team
+    email: team@example.com
