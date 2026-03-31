@@ -1,0 +1,759 @@
+openapi: "3.0.3"
+info:
+  title: OMS Planning API
+  description: |
+    Planning bounded context API for the Order Management System.
+    Organizes confirmed orders into executable fulfillment batches using Wave (batch) or Dynamic (streaming) modes.
+  version: "1.0.0"
+  contact:
+    name: OMS Team
+
+servers:
+  - url: http://localhost:8081
+    description: Local development
+
+tags:
+  - name: Plans
+    description: Plan management operations
+  - name: Plan Items
+    description: Plan item operations
+
+paths:
+  /v1/plans:
+    post:
+      operationId: createPlan
+      summary: Create a new plan
+      description: |
+        Creates a new fulfillment plan in CREATED status. For DYNAMIC mode plans,
+        adding the first item will auto-transition to RELEASED.
+      tags:
+        - Plans
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlanRequest"
+      responses:
+        "201":
+          description: Plan created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "422":
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+    get:
+      operationId: listPlans
+      summary: List plans with filtering
+      description: Returns a paginated list of plans with optional filtering by status, mode, and priority.
+      tags:
+        - Plans
+      parameters:
+        - name: status
+          in: query
+          description: Filter by plan status
+          schema:
+            $ref: "#/components/schemas/PlanStatus"
+        - name: mode
+          in: query
+          description: Filter by planning mode
+          schema:
+            $ref: "#/components/schemas/PlanningMode"
+        - name: priority
+          in: query
+          description: Filter by plan priority
+          schema:
+            $ref: "#/components/schemas/PlanPriority"
+        - name: cursor
+          in: query
+          description: Opaque pagination cursor
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Number of results per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Paginated list of plans
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanList"
+
+  /v1/plans/{planId}:
+    get:
+      operationId: getPlanById
+      summary: Get plan by ID
+      description: Returns a single plan with all items.
+      tags:
+        - Plans
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Plan found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        "404":
+          description: Plan not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+  /v1/plans/{planId}/items:
+    get:
+      operationId: getPlanItems
+      summary: Get plan items
+      description: Returns all items in a plan.
+      tags:
+        - Plan Items
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Plan items
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PlanItem"
+        "404":
+          description: Plan not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+    post:
+      operationId: addPlanItem
+      summary: Add item to plan
+      description: |
+        Adds an order item reference to the plan. For DYNAMIC plans in CREATED status,
+        adding the first item triggers auto-release to RELEASED.
+      tags:
+        - Plan Items
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddPlanItemRequest"
+      responses:
+        "201":
+          description: Item added successfully
+          headers:
+            Location:
+              description: URI of the created item
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanItem"
+        "404":
+          description: Plan not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: Duplicate item or invalid state
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: Validation error or plan full
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+  /v1/plans/{planId}/items/{itemId}:
+    delete:
+      operationId: removePlanItem
+      summary: Remove item from plan
+      description: Removes an item from the plan. Only allowed if plan is in CREATED or PROCESSING status.
+      tags:
+        - Plan Items
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/ItemId"
+      responses:
+        "204":
+          description: Item removed successfully
+        "404":
+          description: Item not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: Invalid state (items immutable after release)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+  /v1/plans/{planId}/process:
+    post:
+      operationId: processPlan
+      summary: Process plan
+      description: |
+        Transitions a WAVE plan from CREATED to PROCESSING. Validates that plan has
+        at least one item. Not applicable to DYNAMIC plans (they auto-release).
+      tags:
+        - Plans
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Plan processing started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanStatusResponse"
+        "404":
+          description: Plan not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: Invalid state transition or not applicable
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: Empty plan cannot be processed
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+  /v1/plans/{planId}/hold:
+    post:
+      operationId: holdPlan
+      summary: Hold plan
+      description: Pauses processing of a WAVE plan (PROCESSING → HELD).
+      tags:
+        - Plans
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Plan held
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanStatusResponse"
+        "404":
+          description: Plan not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: Invalid state transition
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+  /v1/plans/{planId}/resume:
+    post:
+      operationId: resumePlan
+      summary: Resume plan
+      description: Resumes processing of a held WAVE plan (HELD → PROCESSING).
+      tags:
+        - Plans
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Plan resumed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanStatusResponse"
+        "404":
+          description: Plan not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: Invalid state transition
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+  /v1/plans/{planId}/release:
+    post:
+      operationId: releasePlan
+      summary: Release plan
+      description: |
+        Releases a plan to the warehouse floor (PROCESSING → RELEASED for WAVE plans).
+        DYNAMIC plans auto-release on first item, so explicit Release is not needed.
+      tags:
+        - Plans
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Plan released
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanStatusResponse"
+        "404":
+          description: Plan not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: Invalid state transition (must process WAVE plans first)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+  /v1/plans/{planId}/complete:
+    post:
+      operationId: completePlan
+      summary: Complete plan
+      description: Marks a released plan as completed (RELEASED → COMPLETED).
+      tags:
+        - Plans
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Plan completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanStatusResponse"
+        "404":
+          description: Plan not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: Invalid state transition
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+  /v1/plans/{planId}/cancel:
+    post:
+      operationId: cancelPlan
+      summary: Cancel plan
+      description: Cancels a plan with an audit reason (any non-terminal status → CANCELLED).
+      tags:
+        - Plans
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelPlanRequest"
+      responses:
+        "200":
+          description: Plan cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanStatusResponse"
+        "404":
+          description: Plan not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: Cannot cancel terminal state
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "422":
+          description: Validation error (empty reason)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
+components:
+  parameters:
+    PlanId:
+      name: planId
+      in: path
+      required: true
+      description: UUID of the plan
+      schema:
+        type: string
+        format: uuid
+
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      description: UUID of the plan item
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    PlanningMode:
+      type: string
+      enum:
+        - WAVE
+        - DYNAMIC
+      description: |
+        - WAVE: Batch-based processing (accumulate, process, release)
+        - DYNAMIC: Continuous streaming (auto-release on first item)
+
+    GroupingStrategy:
+      type: string
+      enum:
+        - CARRIER
+        - ZONE
+        - PRIORITY
+        - CHANNEL
+        - NONE
+      default: NONE
+      description: Criteria for batching orders (metadata only in Phase 1)
+
+    PlanPriority:
+      type: string
+      enum:
+        - LOW
+        - NORMAL
+        - HIGH
+        - RUSH
+      default: NORMAL
+      description: Urgency level for plan execution
+
+    PlanStatus:
+      type: string
+      enum:
+        - CREATED
+        - PROCESSING
+        - HELD
+        - RELEASED
+        - COMPLETED
+        - CANCELLED
+      description: Plan lifecycle status
+
+    CreatePlanRequest:
+      type: object
+      required:
+        - name
+        - mode
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          minLength: 1
+          description: Human-readable plan name (non-empty)
+        mode:
+          $ref: "#/components/schemas/PlanningMode"
+        groupingStrategy:
+          $ref: "#/components/schemas/GroupingStrategy"
+        priority:
+          $ref: "#/components/schemas/PlanPriority"
+        maxItems:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Maximum item capacity (0 = unlimited)
+        notes:
+          type: string
+          maxLength: 2000
+          description: Optional memo field
+
+    AddPlanItemRequest:
+      type: object
+      required:
+        - orderId
+        - sku
+        - quantity
+      properties:
+        orderId:
+          type: string
+          format: uuid
+          description: Reference to order in Order Intake context
+        sku:
+          type: string
+          maxLength: 100
+          minLength: 1
+          description: Product SKU code
+        quantity:
+          type: integer
+          minimum: 1
+          description: Number of units (must be > 0)
+
+    CancelPlanRequest:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          maxLength: 1000
+          minLength: 1
+          description: Cancellation reason (audit trail)
+
+    PlanItem:
+      type: object
+      required:
+        - id
+        - orderId
+        - sku
+        - quantity
+        - addedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Plan item ID
+        orderId:
+          type: string
+          format: uuid
+          description: Order ID reference
+        sku:
+          type: string
+          description: Product SKU
+        quantity:
+          type: integer
+          minimum: 1
+          description: Number of units
+        addedAt:
+          type: string
+          format: date-time
+          description: When item was added to plan
+
+    Plan:
+      type: object
+      required:
+        - id
+        - name
+        - mode
+        - groupingStrategy
+        - priority
+        - status
+        - maxItems
+        - itemCount
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        mode:
+          $ref: "#/components/schemas/PlanningMode"
+        groupingStrategy:
+          $ref: "#/components/schemas/GroupingStrategy"
+        priority:
+          $ref: "#/components/schemas/PlanPriority"
+        status:
+          $ref: "#/components/schemas/PlanStatus"
+        maxItems:
+          type: integer
+          minimum: 0
+        notes:
+          type: string
+        itemCount:
+          type: integer
+          minimum: 0
+          description: Current number of items in plan
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanItem"
+          description: Plan items (included in GET /plans/{planId}, omitted in list)
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        processedAt:
+          type: string
+          format: date-time
+        releasedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        cancelledAt:
+          type: string
+          format: date-time
+        cancellationReason:
+          type: string
+
+    PlanSummary:
+      type: object
+      required:
+        - id
+        - name
+        - mode
+        - groupingStrategy
+        - priority
+        - status
+        - maxItems
+        - itemCount
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        mode:
+          $ref: "#/components/schemas/PlanningMode"
+        groupingStrategy:
+          $ref: "#/components/schemas/GroupingStrategy"
+        priority:
+          $ref: "#/components/schemas/PlanPriority"
+        status:
+          $ref: "#/components/schemas/PlanStatus"
+        maxItems:
+          type: integer
+        itemCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        releasedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        cancelledAt:
+          type: string
+          format: date-time
+
+    PlanStatusResponse:
+      type: object
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/PlanStatus"
+        processedAt:
+          type: string
+          format: date-time
+        releasedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        cancelledAt:
+          type: string
+          format: date-time
+        cancellationReason:
+          type: string
+
+    PlanList:
+      type: object
+      required:
+        - data
+        - pagination
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanSummary"
+        pagination:
+          $ref: "#/components/schemas/PlanPagination"
+
+    PlanPagination:
+      type: object
+      properties:
+        next:
+          type: string
+          description: Opaque cursor for next page (null if no more pages)
+        previous:
+          type: string
+          description: Opaque cursor for previous page (null if first page)
+
+    ProblemDetail:
+      type: object
+      required:
+        - type
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          format: uri
+          description: URI reference identifying the problem type
+        title:
+          type: string
+          description: Short human-readable summary
+        status:
+          type: integer
+          description: HTTP status code
+        detail:
+          type: string
+          description: Detailed explanation
+        instance:
+          type: string
+          format: uri
+          description: URI reference identifying the specific occurrence
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationError"
+          description: Validation errors (422 responses only)
+
+    ValidationError:
+      type: object
+      properties:
+        field:
+          type: string
+          description: Field name that failed validation
+        message:
+          type: string
+          description: Validation error message
