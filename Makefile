@@ -1,4 +1,4 @@
-.PHONY: help build test test-unit test-integration lint clean docker-up docker-down migrate-up migrate-down run
+.PHONY: help build test test-unit test-integration lint clean docker-up docker-down migrate-up migrate-down run docs-preview docs-deploy
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -38,5 +38,17 @@ migrate-down: ## Rollback database migrations
 
 run: ## Run the planning service
 	go run ./cmd/planning
+
+docs-preview: ## Preview documentation locally with Jekyll
+	@echo "Starting Jekyll server..."
+	@cd docs && bundle install && bundle exec jekyll serve --livereload
+	@echo "Docs available at http://localhost:4000/planning/"
+
+docs-deploy: ## Deploy documentation to GitHub Pages
+	@echo "Deploying to GitHub Pages..."
+	@git add docs/ README.md
+	@git commit -m "docs: update documentation" || echo "No changes to commit"
+	@git push origin main
+	@echo "✅ Deployed to https://mcp-log.github.io/planning/"
 
 .DEFAULT_GOAL := help
